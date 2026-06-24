@@ -1,0 +1,129 @@
+desc:YOU WA SHOCK ! (Native JSFX Clone)
+// Custom JSFX clone of the famous YOU WA SHOCK ! exciter/maximizer plugin.
+// Since this is native to REAPER, it has 64-bit compatibility, runs with zero latency, and ignores MIDI events to prevent noise issues.
+
+slider1:50<0,100,1>Amount (%)
+slider2:0<0,3,1{Preset A (Balanced),Preset B (Bass Punchy),Preset C (Air / Sparkle),Preset D (Heavy / Fat)}>Mode
+
+@init
+// Crossover frequencies
+f_low = 180;
+f_high = 3200;
+
+// Filter coefficients calculation
+function calc_filter_coeff(f, srate) local(x) (
+  x = 2 * $pi * f / srate;
+  x / (1 + x);
+);
+
+// Fast algebraic soft saturation (limiter/clipper)
+function sat(x, drive) local(xd) (
+  xd = x * drive;
+  xd / (1 + abs(xd));
+);
+
+// Asymmetric saturation for high-end sparkle (Preset C)
+function sat_asym(x, drive) local(xd) (
+  xd = x * drive;
+  xd > 0 ? (
+    xd / (1 + xd)
+  ) : (
+    xd / (1 + abs(xd) * 0.4)
+  );
+);
+
+@slider
+amt = slider1 / 100;
+mode = slider2;
+
+// Calculate filter coefficients based on current sample rate
+a_low = calc_filter_coeff(f_low, srate);
+a_high = calc_filter_coeff(f_high, srate);
+
+@sample
+// Crossover - Left Channel (1st-order Linkwitz-Riley crossover cascaded for 2nd-order response)
+in_l = spl0;
+lp1_L_l = lp1_L_l + a_low * (in_l - lp1_L_l);
+lp2_L_l = lp2_L_l + a_low * (lp1_L_l - lp2_L_l);
+low_l = lp2_L_l;
+high_mid_l = in_l - low_l;
+
+lp1_H_l = lp1_H_l + a_high * (high_mid_l - lp1_H_l);
+lp2_H_l = lp2_H_l + a_high * (lp1_H_l - lp2_H_l);
+mid_l = lp2_H_l;
+high_l = high_mid_l - mid_l;
+
+// Crossover - Right Channel
+in_r = spl1;
+lp1_L_r = lp1_L_r + a_low * (in_r - lp1_L_r);
+lp2_L_r = lp2_L_r + a_low * (lp1_L_r - lp2_L_r);
+low_r = lp2_L_r;
+high_mid_r = in_r - low_r;
+
+lp1_H_r = lp1_H_r + a_high * (high_mid_r - lp1_H_r);
+lp2_H_r = lp2_H_r + a_high * (lp1_H_r - lp2_H_r);
+mid_r = lp2_H_r;
+high_r = high_mid_r - mid_r;
+
+// Processing
+mode == 0 ? (
+  // Mode A (Balanced / Loud)
+  low_l_p = sat(low_l, 1.0 + amt * 0.6) * (1.0 + amt * 0.15);
+  mid_l_p = sat(mid_l, 1.0 + amt * 1.5) * (1.0 + amt * 0.1);
+  high_l_p = sat(high_l, 1.0 + amt * 2.2) * (1.0 + amt * 0.35);
+  
+  low_r_p = sat(low_r, 1.0 + amt * 0.6) * (1.0 + amt * 0.15);
+  mid_r_p = sat(mid_r, 1.0 + amt * 1.5) * (1.0 + amt * 0.1);
+  high_r_p = sat(high_r, 1.0 + amt * 2.2) * (1.0 + amt * 0.35);
+) : mode == 1 ? (
+  // Mode B (Bass Punchy)
+  low_l_p = sat(low_l, 1.0 + amt * 2.5) * (1.0 + amt * 0.45);
+  mid_l_p = sat(mid_l, 1.0 + amt * 0.8) * (1.0 - amt * 0.05);
+  high_l_p = sat(high_l, 1.0 + amt * 0.6);
+  
+  low_r_p = sat(low_r, 1.0 + amt * 2.5) * (1.0 + amt * 0.45);
+  mid_r_p = sat(mid_r, 1.0 + amt * 0.8) * (1.0 - amt * 0.05);
+  high_r_p = sat(high_r, 1.0 + amt * 0.6);
+) : mode == 2 ? (
+  // Mode C (Air / Sparkle)
+  low_l_p = low_l;
+  mid_l_p = sat(mid_l, 1.0 + amt * 0.6);
+  high_l_p = sat_asym(high_l, 1.0 + amt * 4.0) * (1.0 + amt * 0.6);
+  
+  low_r_p = low_r;
+  mid_r_p = sat(mid_r, 1.0 + amt * 0.6);
+  high_r_p = sat_asym(high_r, 1.0 + amt * 4.0) * (1.0 + amt * 0.6);
+) : (
+  // Mode D (Heavy / Fat)
+  low_l_p = sat(low_l, 1.0 + amt * 1.8) * (1.0 + amt * 0.25);
+  mid_l_p = sat(mid_l, 1.0 + amt * 2.5) * (1.0 + amt * 0.2);
+  high_l_p = sat(high_l, 1.0 + amt * 1.8) * (1.0 + amt * 0.25);
+  
+  low_r_p = sat(low_r, 1.0 + amt * 1.8) * (1.0 + amt * 0.25);
+  mid_r_p = sat(mid_r, 1.0 + amt * 2.5) * (1.0 + amt * 0.2);
+  high_r_p = sat(high_r, 1.0 + amt * 1.8) * (1.0 + amt * 0.25);
+);
+
+// Sum the bands
+out_l = low_l_p + mid_l_p + high_l_p;
+out_r = low_r_p + mid_r_p + high_r_p;
+
+// Dynamic makeup gain & output volume scaling
+out_l *= (1.0 + amt * 0.25);
+out_r *= (1.0 + amt * 0.25);
+
+// Master Soft Clipper to prevent digital clipping (> 0 dB)
+limit = 0.95;
+scale = 0.05;
+abs_l = abs(out_l);
+abs_l > limit ? (
+  out_l = (out_l >= 0 ? 1 : -1) * (limit + scale * ( (abs_l - limit) / (scale + abs_l - limit) ));
+);
+abs_r = abs(out_r);
+abs_r > limit ? (
+  out_r = (out_r >= 0 ? 1 : -1) * (limit + scale * ( (abs_r - limit) / (scale + abs_r - limit) ));
+);
+
+// Output
+spl0 = out_l;
+spl1 = out_r;
